@@ -6,21 +6,23 @@
 
 typedef struct {
     pthread_mutex_t mtx;
-    pthread_cond_t  cond;
-    int             has_event; 
-    int             done;       
+    pthread_cond_t  cond_data;
+    pthread_cond_t  cond_done;
+    int             has_event;
+    int             done;
     void           *event_ptr;
 } monitor_t;
 
 static monitor_t mon = {
-    .mtx = PTHREAD_MUTEX_INITIALIZER,
-    .cond = PTHREAD_COND_INITIALIZER,
+    .mtx       = PTHREAD_MUTEX_INITIALIZER,
+    .cond_data = PTHREAD_COND_INITIALIZER,
+    .cond_done = PTHREAD_COND_INITIALIZER,
     .has_event = 0,
-    .done = 0,
+    .done      = 0,
     .event_ptr = NULL
 };
 
-#define NUM_PACKETS 7  
+#define NUM_PACKETS 7
 
 static void *producer(void *arg)
 {
@@ -34,13 +36,14 @@ static void *producer(void *arg)
 
         pthread_mutex_lock(&mon.mtx);
         while (mon.has_event)
-            pthread_cond_wait(&mon.cond, &mon.mtx);
+            pthread_cond_wait(&mon.cond_data, &mon.mtx);
+
         mon.event_ptr = payload;
         mon.has_event = 1;
         printf("Provider has sent a payload #%d (payload=%d)\n",
                i, *payload);
         fflush(stdout);
-        pthread_cond_signal(&mon.cond);
+        pthread_cond_signal(&mon.cond_data);
         pthread_mutex_unlock(&mon.mtx);
     }
 
@@ -48,7 +51,8 @@ static void *producer(void *arg)
     mon.done = 1;
     printf("Provider has stopped the transmission.\n");
     fflush(stdout);
-    pthread_cond_signal(&mon.cond);
+    pthread_cond_broadcast(&mon.cond_data);
+    pthread_cond_broadcast(&mon.cond_done);
     pthread_mutex_unlock(&mon.mtx);
 
     return NULL;
@@ -59,8 +63,9 @@ static void *consumer(void *arg)
     (void)arg;
     for (;;) {
         pthread_mutex_lock(&mon.mtx);
+
         while (!mon.has_event && !mon.done)
-            pthread_cond_wait(&mon.cond, &mon.mtx);
+            pthread_cond_wait(&mon.cond_data, &mon.mtx);
 
         if (!mon.has_event && mon.done) {
             pthread_mutex_unlock(&mon.mtx);
@@ -74,7 +79,7 @@ static void *consumer(void *arg)
         printf("Consumer has received a payload: (payload=%d)\n", *payload);
         fflush(stdout);
 
-        pthread_cond_signal(&mon.cond);
+        pthread_cond_signal(&mon.cond_data);
         pthread_mutex_unlock(&mon.mtx);
 
         free(payload);
@@ -100,6 +105,7 @@ int main(void)
     pthread_join(tc, NULL);
 
     pthread_mutex_destroy(&mon.mtx);
-    pthread_cond_destroy(&mon.cond);
+    pthread_cond_destroy(&mon.cond_data);
+    pthread_cond_destroy(&mon.cond_done);
     return 0;
 }
